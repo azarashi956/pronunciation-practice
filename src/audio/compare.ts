@@ -5,7 +5,7 @@ import { comparePauses, findPauses, localSpeed, pearson, pitchRange, rhythmDevia
 import { trimSilence } from './trim';
 
 export const MIN_SECONDS = 0.15;
-export const MAX_SECONDS = 30;
+export const MAX_SECONDS = 60;
 
 export interface RawComparison {
     /** Mean feature distance along the DTW path; 0 = identical. */
@@ -104,4 +104,3 @@ export function compareUtterances(refRaw: Float32Array, attRaw: Float32Array): R
         attPitch,
     };
 }
-

@@ -2,6 +2,7 @@ import './style.css';
 import teacherSampleAudioUrl from './assets/teacher-2026-wbc.m4a?url';
 import teacherSampleTranscript from './assets/teacher-2026-wbc.txt?raw';
 import { compareInWorker, decodeTo16kMono } from './audio/analyze';
+import { MAX_SECONDS } from './audio/compare';
 import { SAMPLE_RATE } from './audio/features';
 import { encodeWav, sliceSeconds } from './audio/wav';
 import { transcribe } from './audio/whisper';
@@ -9,11 +10,11 @@ import { classify, planImport, type ImportEntry } from './import';
 import { Recorder } from './recorder';
 import { evaluate, LENIENCIES, type Evaluation } from './scoring';
 import { addItem, deleteItem, getAudioBlob, listItems, recordAttempt, requestPersistence, type ItemMeta } from './store';
-import { checkWords, type WordResult } from './words';
+import { checkWords, normalizeWord, type WordResult } from './words';
 import type { RawComparison } from './audio/compare';
 
 const app = document.getElementById('app')!;
-const MAX_RECORD_MS = 60000;
+const MAX_RECORD_MS = MAX_SECONDS * 1000;
 const TEACHER_SAMPLE_NAME = 'Teacher sample · 2026 WBC';
 const TEACHER_SAMPLE_SEEDED_KEY = 'teacherSample2026WbcSeeded';
 
@@ -35,8 +36,6 @@ function getLeniencyId(): string {
     const saved = localStorage.getItem('leniency');
     return LENIENCIES.some((l) => l.id === saved) ? saved! : 'normal';
 }
-
-const wordCheckEnabled = () => localStorage.getItem('wordCheck') === '1';
 
 function render(...nodes: Node[]) {
     app.replaceChildren(...nodes);
@@ -118,9 +117,6 @@ async function showHome(message = '') {
     leniency.value = getLeniencyId();
     leniency.addEventListener('change', () => localStorage.setItem('leniency', leniency.value));
 
-    const wordCheck = h('input', { type: 'checkbox', checked: wordCheckEnabled() });
-    wordCheck.addEventListener('change', () => localStorage.setItem('wordCheck', wordCheck.checked ? '1' : '0'));
-
     const groups = new Map<string, ItemMeta[]>();
     for (const item of items) groups.set(item.group ?? '', [...(groups.get(item.group ?? '') ?? []), item]);
 
@@ -168,7 +164,7 @@ async function showHome(message = '') {
                 'div',
                 { class: 'settings' },
                 h('label', { class: 'leniency' }, 'Scoring ', leniency),
-                h('label', { class: 'leniency' }, wordCheck, ' Word check (one-time download of about 70 MB)'),
+                h('span', { textContent: 'Word comparison downloads a speech model on first use.' }),
             ),
         ),
         h('div', { class: 'toolbar' }, importBtn, ...(sampleBtn ? [sampleBtn] : []), picker),
@@ -253,7 +249,7 @@ function resultView(raw: RawComparison, ev: Evaluation): HTMLElement {
 
 const errorText: Record<string, string> = {
     TOO_SHORT: 'Recording too short. Try again.',
-    TOO_LONG: 'Recording too long (60 seconds max).',
+    TOO_LONG: `Recording too long (${MAX_SECONDS} seconds max).`,
 };
 
 async function showPractice(item: ItemMeta, queue: ItemMeta[] = [item]) {
@@ -268,18 +264,23 @@ async function showPractice(item: ItemMeta, queue: ItemMeta[] = [item]) {
 
     const resultBox = h('div', { class: 'result-box' });
     const status = h('p', { class: 'status' });
-    const wordsLine = h('p', { class: 'status' });
+    const wordsLine = h('p', { class: 'status', role: 'status' });
+    const wordComparison = h('section', { class: 'word-comparison', hidden: true });
     const starsLine = h('div', { class: 'card-stars', textContent: `Best: ${stars(current.bestStars)}` });
 
     const sentence = h('div', { class: `sentence ${item.text.length > 70 ? 'xl' : item.text.length > 30 ? 'l' : 'm'}` });
-    const renderSentence = (results: WordResult[] | null) => {
+    const renderSentence = (target: HTMLElement, results: WordResult[] | null) => {
         const chips: { word: string; status?: WordResult['status']; heard?: string }[] =
             results ?? item.text.split(/\s+/).filter(Boolean).map((word) => ({ word }));
-        sentence.replaceChildren(
-            ...chips.map((c) => h('span', { class: `w ${c.status ?? ''}`.trim() }, c.word, ...(c.heard ? [h('small', { textContent: c.heard })] : []))),
+        target.replaceChildren(
+            ...chips.map((c) => {
+                const status = normalizeWord(c.word) ? c.status : undefined;
+                const label = status ? `${c.word}: ${{ ok: 'matched', wrong: 'heard differently', missing: 'not recognized' }[status]}${c.heard ? `, heard ${c.heard}` : ''}` : c.word;
+                return h('span', { class: `w ${status ?? ''}`.trim(), ariaLabel: label }, c.word, ...(c.heard ? [h('small', { textContent: `heard: ${c.heard}` })] : []));
+            }),
         );
     };
-    renderSentence(null);
+    renderSentence(sentence, null);
 
     const leave = () => {
         attempt++;
@@ -337,11 +338,27 @@ async function showPractice(item: ItemMeta, queue: ItemMeta[] = [item]) {
             });
             if (token !== attempt) return;
             const results = checkWords(item.text, text);
-            renderSentence(results);
-            const ok = results.filter((r) => r.status === 'ok').length;
-            wordsLine.textContent = `Words: ${ok} of ${results.length} matched. Heard: "${text.trim()}"`;
-        } catch {
-            if (token === attempt) wordsLine.textContent = 'Word check unavailable. The speech model needs an internet connection the first time.';
+            const words = results.filter((r) => normalizeWord(r.word));
+            const ok = words.filter((r) => r.status === 'ok').length;
+            wordsLine.textContent = 'Word comparison complete.';
+            const alignedScript = h('div', { class: 'aligned-script' });
+            renderSentence(alignedScript, results);
+            wordComparison.replaceChildren(
+                h('h2', { textContent: 'Word comparison' }),
+                h('p', { textContent: `${ok} of ${words.length} script words matched.` }),
+                h('p', { class: 'word-legend' }, h('span', { class: 'legend-ok', textContent: 'Matched' }), ' · ', h('span', { class: 'legend-wrong', textContent: 'Heard differently' }), ' · ', h('span', { class: 'legend-missing', textContent: 'Not recognized' })),
+                h('p', { class: 'comparison-label', textContent: 'Original script' }),
+                alignedScript,
+                h('p', { class: 'comparison-label', textContent: 'Recognized speech' }),
+                h('p', { class: 'heard-text', textContent: text.trim() || '(No words recognized)' }),
+                h('p', { class: 'comparison-note', textContent: 'Speech recognition can make mistakes. Extra recognized words appear above but do not count as script matches.' }),
+            );
+            wordComparison.hidden = false;
+        } catch (err) {
+            if (token === attempt) {
+                const reason = err instanceof Error ? err.message : String(err);
+                wordsLine.textContent = `Word comparison unavailable: ${reason}. The speech model needs an internet connection on first use.`;
+            }
         }
     };
 
@@ -351,7 +368,9 @@ async function showPractice(item: ItemMeta, queue: ItemMeta[] = [item]) {
         fileBtn.disabled = true;
         status.textContent = 'Analyzing…';
         wordsLine.textContent = '';
-        renderSentence(null);
+        wordComparison.hidden = true;
+        wordComparison.replaceChildren();
+        renderSentence(sentence, null);
         try {
             const blob = await getBlob();
             if (myUrl) URL.revokeObjectURL(myUrl);
@@ -368,7 +387,7 @@ async function showPractice(item: ItemMeta, queue: ItemMeta[] = [item]) {
             starsLine.textContent = `Best: ${stars(current.bestStars)}`;
             resultBox.replaceChildren(resultView(raw, ev));
             status.textContent = '';
-            if (wordCheckEnabled()) void checkSpoken(att, token);
+            void checkSpoken(att, token);
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             status.textContent = errorText[msg] ?? `Analysis failed: ${msg}`;
@@ -398,6 +417,11 @@ async function showPractice(item: ItemMeta, queue: ItemMeta[] = [item]) {
             return;
         }
         try {
+            attempt++;
+            wordsLine.textContent = '';
+            wordComparison.hidden = true;
+            wordComparison.replaceChildren();
+            renderSentence(sentence, null);
             refPlayer?.pause();
             await recorder.start();
             recording = true;
@@ -426,6 +450,7 @@ async function showPractice(item: ItemMeta, queue: ItemMeta[] = [item]) {
         starsLine,
         h('div', { class: 'actions' }, playRef, playSlow, recBtn, fileBtn, playMine, fileInput),
         status,
+        wordComparison,
         resultBox,
         del,
     );

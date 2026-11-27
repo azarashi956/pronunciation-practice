@@ -14,7 +14,7 @@ const MODEL = 'onnx-community/whisper-base.en';
 
 env.allowLocalModels = false;
 
-type Recognizer = (audio: Float32Array) => Promise<{ text: string }>;
+type Recognizer = (audio: Float32Array, options: { chunk_length_s: number; stride_length_s: number }) => Promise<{ text: string }>;
 
 const post = (m: TranscribeResponse) => (self as unknown as Worker).postMessage(m);
 const files = new Map<string, { loaded: number; total: number }>();
@@ -47,7 +47,7 @@ addEventListener('message', async (e: MessageEvent<TranscribeRequest>) => {
     const { id, audio } = e.data;
     try {
         const run = await load();
-        const out = await run(audio);
+        const out = await run(audio, { chunk_length_s: 30, stride_length_s: 5 });
         post({ type: 'result', id, text: out.text });
     } catch (err) {
         post({ type: 'error', id, error: err instanceof Error ? err.message : String(err) });

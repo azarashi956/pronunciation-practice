@@ -70,6 +70,14 @@ describe('compareUtterances', () => {
         expect(() => compareUtterances(adultA, silence(1))).toThrow('TOO_SHORT');
     });
 
+    it('accepts 60 seconds of speech and rejects speech over 60 seconds', () => {
+        const tone = Float32Array.from({ length: 61 * SAMPLE_RATE }, (_, i) =>
+            0.5 * Math.sin((2 * Math.PI * 200 * i) / SAMPLE_RATE),
+        );
+        expect(() => compareUtterances(adultA, tone.subarray(0, 60 * SAMPLE_RATE))).not.toThrow();
+        expect(() => compareUtterances(adultA, tone)).toThrow('TOO_LONG');
+    }, 30000);
+
     it('finds a skipped pause and a rhythm difference', () => {
         const phrase = synth(wordA(120));
         const withPause = concat(phrase, silence(0.5), phrase);
