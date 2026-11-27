@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { classify, parseCues, parseListText, planImport } from './import';
 import { evaluate, LENIENCIES, starsFor } from './scoring';
 import { checkWords } from './words';
@@ -44,6 +45,24 @@ describe('parseCues', () => {
 });
 
 describe('planImport', () => {
+    it('pairs the 2026 WBC sample recording with its transcript', () => {
+        const audio = readFileSync(new URL('./assets/teacher-2026-wbc.m4a', import.meta.url));
+        const transcript = readFileSync(new URL('./assets/teacher-2026-wbc.txt', import.meta.url), 'utf8');
+        expect(audio.byteLength).toBeGreaterThan(0);
+        expect(classify('teacher-2026-wbc.m4a', 'audio/mp4')).toBe('audio');
+        expect(classify('teacher-2026-wbc.txt', 'text/plain')).toBe('text');
+        expect(
+            planImport([
+                { name: 'teacher-2026-wbc.m4a', kind: 'audio' },
+                { name: 'teacher-2026-wbc.txt', kind: 'text', text: transcript },
+            ]),
+        ).toEqual({
+            pairs: [{ audioName: 'teacher-2026-wbc.m4a', text: transcript.trim().split(/\r?\n/).join(' ') }],
+            cuts: [],
+            warnings: [],
+        });
+    });
+
     it('cuts one recording by its subtitle cues', () => {
         const srt = '1\n00:00:00,000 --> 00:00:02,000\nFirst line\n\n2\n00:00:02,500 --> 00:00:05,000\nSecond line\n';
         const plan = planImport([

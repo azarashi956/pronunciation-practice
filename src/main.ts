@@ -1,4 +1,6 @@
 import './style.css';
+import teacherSampleAudioUrl from './assets/teacher-2026-wbc.m4a?url';
+import teacherSampleTranscript from './assets/teacher-2026-wbc.txt?raw';
 import { compareInWorker, decodeTo16kMono } from './audio/analyze';
 import { SAMPLE_RATE } from './audio/features';
 import { encodeWav, sliceSeconds } from './audio/wav';
@@ -11,7 +13,9 @@ import { checkWords, type WordResult } from './words';
 import type { RawComparison } from './audio/compare';
 
 const app = document.getElementById('app')!;
-const MAX_RECORD_MS = 30000;
+const MAX_RECORD_MS = 60000;
+const TEACHER_SAMPLE_NAME = 'Teacher sample · 2026 WBC';
+const TEACHER_SAMPLE_SEEDED_KEY = 'teacherSample2026WbcSeeded';
 
 function h<K extends keyof HTMLElementTagNameMap>(
     tag: K,
@@ -73,7 +77,24 @@ async function importFiles(files: File[]): Promise<string> {
 }
 
 async function showHome(message = '') {
-    const items = await listItems();
+    let items = await listItems();
+    if (localStorage.getItem(TEACHER_SAMPLE_SEEDED_KEY) !== '1') {
+        try {
+            const response = await fetch(teacherSampleAudioUrl);
+            if (!response.ok) throw new Error(`Audio request failed (${response.status})`);
+            const item = await addItem(
+                teacherSampleTranscript.trim(),
+                TEACHER_SAMPLE_NAME,
+                'audio/mp4',
+                await response.arrayBuffer(),
+            );
+            localStorage.setItem(TEACHER_SAMPLE_SEEDED_KEY, '1');
+            items = [...items, item];
+        } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            message = [message, `Teacher sample unavailable: ${reason}`].filter(Boolean).join('\n');
+        }
+    }
 
     const picker = h('input', {
         type: 'file',
@@ -131,6 +152,12 @@ async function showHome(message = '') {
 
     const importBtn = h('button', { class: 'primary', textContent: 'Import' });
     importBtn.addEventListener('click', () => picker.click());
+    const teacherSample = items.find((item) => item.name === TEACHER_SAMPLE_NAME);
+    let sampleBtn: HTMLButtonElement | null = null;
+    if (teacherSample) {
+        sampleBtn = h('button', { textContent: 'Try teacher sample' });
+        sampleBtn.addEventListener('click', () => void showPractice(teacherSample));
+    }
 
     render(
         h(
@@ -144,7 +171,7 @@ async function showHome(message = '') {
                 h('label', { class: 'leniency' }, wordCheck, ' Word check (one-time download of about 70 MB)'),
             ),
         ),
-        h('div', { class: 'toolbar' }, importBtn, picker),
+        h('div', { class: 'toolbar' }, importBtn, ...(sampleBtn ? [sampleBtn] : []), picker),
         message ? h('p', { class: 'notice', textContent: message }) : h('span'),
         list,
     );
@@ -226,7 +253,7 @@ function resultView(raw: RawComparison, ev: Evaluation): HTMLElement {
 
 const errorText: Record<string, string> = {
     TOO_SHORT: 'Recording too short. Try again.',
-    TOO_LONG: 'Recording too long (30 seconds max).',
+    TOO_LONG: 'Recording too long (60 seconds max).',
 };
 
 async function showPractice(item: ItemMeta, queue: ItemMeta[] = [item]) {

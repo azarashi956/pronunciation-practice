@@ -10,7 +10,7 @@ export type TranscribeResponse =
     | { type: 'result'; id: number; text: string }
     | { type: 'error'; id: number; error: string };
 
-const MODEL = 'onnx-community/whisper-tiny.en';
+const MODEL = 'onnx-community/whisper-base.en';
 
 env.allowLocalModels = false;
 
